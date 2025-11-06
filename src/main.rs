@@ -13,17 +13,16 @@ struct AppState {
     storage: Mutex<HashMap<String, Parts>>,
 }
 
-// static mut PART_A: Option<Vec<u8>> = None;
-// static mut PART_B: Option<Vec<u8>> = None;
-
 #[post("/part_a?<name>", format = "application/x-netcdf", data = "<input>")]
 fn part_a(name: String, input: Vec<u8>, state: &State<AppState>) -> status::Accepted<String> {
+    
     // Dig up the relevant part of state, or create it if necessary
     let mut storage = state.storage.lock().unwrap();
     let entry = storage.entry(name.clone()).or_insert_with(|| Parts { part_a: None, part_b: None });
     // Update state with the uploaded file
     entry.part_a = Some(input);
-    status::Accepted(format!("recieved: '{}'", name))
+    let byte_count = entry.part_a.as_ref().unwrap().len();
+    status::Accepted(format!("received: '{}' ({} bytes)", name, byte_count))
 }
 
 #[post("/part_b?<name>", format = "application/x-netcdf", data = "<input>")]
