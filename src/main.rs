@@ -1,9 +1,7 @@
 use netcdf::{AttributeValue, DimensionIdentifier};
-use rocket::{State, serde};
-use rocket::http::ext::IntoCollection;
+use netcdf_sys::{NC_memio, nc_close_memio};
+use rocket::{State};
 use rocket::{response::status};
-use std::fmt::Debug;
-use std::sync::Arc;
 use std::{collections::HashMap, sync::Mutex};
 
 #[macro_use]
@@ -50,9 +48,8 @@ fn merge_parts(part_a: &[u8], part_b: &[u8]) -> Vec<u8> {
     let file_a = netcdf::open_mem(Some("part_a"), part_a).expect("Failed to open part A");
     let file_b = netcdf::open_mem(Some("part_b"), part_b).expect("Failed to open part B");
 
-    // create a new FileMem object
-    let mut output = netcdf::create_with("new.nc", netcdf::Options::DISKLESS)
-        .expect("Failed to create output file");
+    // create a new file object
+    let mut output = netcdf::create_with("output", netcdf::Options::DISKLESS & netcdf::Options::WRITE).expect("Failed to create output file");
 
     for file in [&file_a, &file_b] {
         // Copy dimensions
@@ -96,8 +93,12 @@ fn merge_parts(part_a: &[u8], part_b: &[u8]) -> Vec<u8> {
         }
     }
 
-    // turn the output into raw binary data
-    output
+    // Write output to memory
+    let mut ncid: i32 = 0;
+    let mut info: *mut NC_memio = unsafe { std::mem::zeroed() }; // FIXME: NC-memio's fields are private
+    unsafe { nc_close_memio(ncid, info) };
+    let mut output_bytes: Vec<u8> = Vec::new();
+    return output_bytes;
 }
 
 #[get("/read?<name>")]

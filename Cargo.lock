@@ -110,6 +110,7 @@ name = "combine-netcdf"
 version = "0.1.0"
 dependencies = [
  "netcdf",
+ "netcdf-sys",
  "rocket",
 ]
 
