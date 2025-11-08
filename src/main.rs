@@ -43,6 +43,13 @@ fn part_b(name: String, input: Vec<u8>, state: &State<AppState>) -> status::Acce
     status::Accepted(format!("received: '{}' ({} bytes)", name, byte_count))
 }
 
+// Reimplement NC_memio to circumvent privacy issue
+pub struct AccessibleMemio {
+    size: usize,
+    memory: *mut std::os::raw::c_void,
+    _flags: std::os::raw::c_int,
+}
+
 fn merge_parts(part_a: &[u8], part_b: &[u8]) -> Vec<u8> {
     // Load bytes as netCDF files
     let file_a = netcdf::open_mem(Some("part_a"), part_a).expect("Failed to open part A");
@@ -94,11 +101,14 @@ fn merge_parts(part_a: &[u8], part_b: &[u8]) -> Vec<u8> {
     }
 
     // Write output to memory
-    let mut ncid: i32 = 0;
-    let mut info: *mut NC_memio = unsafe { std::mem::zeroed() }; // FIXME: NC-memio's fields are private
+    let ncid: i32 = 0;
+    let info: *mut NC_memio = unsafe { std::mem::zeroed() }; // FIXME: NC-memio's fields are private
     unsafe { nc_close_memio(ncid, info) };
-    let mut output_bytes: Vec<u8> = Vec::new();
-    return output_bytes;
+    let accessible_info = info as *const AccessibleMemio;
+    let size = unsafe { (*accessible_info).size };
+    let memory_ptr = unsafe { (*accessible_info).memory as *const u8 };
+    let output_bytes = unsafe { std::slice::from_raw_parts(memory_ptr, size).to_vec() };
+    output_bytes
 }
 
 #[get("/read?<name>")]
