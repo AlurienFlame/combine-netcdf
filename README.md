@@ -1,15 +1,3 @@
-## How to Run
-`cargo run`
-## Code Structure
-`main.rs` contains three endpoints, and several functions for merging files.
-- `/part_a` and `/part_b` accept file uploads and store them in a map based on name.
-- `/read` merges the two files in memory and sends the result to the client. It calls:
-    - `merge_parts`, which takes the binary data of the two files and opens them in memory, before passing them to:
-        - `merge_onto`, which reads the files' metadata and copies one onto the other, using several helper functions:
-            - `merge_dims`
-            - `merge_attrs`
-            - `merge_var_definitions`
-## Handling Parallel Requests
 ## Spec
 make a simple rust server that can combine NetCDF files in memory.
 - It should accept POSTs to /part_a?name and /part_b?name with a netcdf file in the body
@@ -23,3 +11,14 @@ My criteria for success:
 - It works
 - It follows all the requirements (ie, does not touch disk)
 - Your overall architecture and code style looks sane. And I only mean sane: it doesn't need to be anything close to beautiful.
+## Code Structure
+`main.rs` contains three endpoints, and several functions for merging files.
+- `/part_a` and `/part_b` accept file uploads and store them in a map based on name.
+- `/read` merges the two files in memory and sends the result to the client. It calls:
+    - `merge_parts`, which takes the binary data of the two files and opens them in memory, before passing them to:
+        - `merge_files`, which reads the files' metadata and copies one onto the other, using several helper functions:
+            - `merge_dims`
+            - `merge_attrs`
+            - `merge_var_definitions`
+            - `merge_var_data`
+## Handling Parallel Requests
