@@ -22,3 +22,8 @@ My criteria for success:
             - `merge_var_definitions`
             - `merge_var_data`
 ## Handling Parallel Requests
+Currently, we store uploaded files in a map inside a Mutex, which avoids parallelism issues by not allowing it at all. This utterly fails to scale. Furthermore, the netcdf_sys library is not thread-safe, which creates another bottleneck.
+
+The storage issue could probably be solved pretty straightforwardly by using something like a DashMap, but the other problem is less tractable.
+
+I would probably approach it by wrapping the netcdf_sys stuff in some kind of encompassing interface that enforces safety, similar to what the `netcdf` library does. I'd have to look more into where exactly the thread-safety issues arise, but I suspect that keeping track of which files are in use and preventing concurrent access to them would help.
