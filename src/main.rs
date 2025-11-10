@@ -1,4 +1,7 @@
-use netcdf_sys::{NC_memio, nc_close_memio, nc_create_mem, nc_def_dim, nc_inq, nc_strerror};
+use netcdf_sys::{
+    NC_memio, nc_close_memio, nc_create_mem, nc_def_dim, nc_inq, nc_inq_ndims, nc_inq_var,
+    nc_strerror,
+};
 use rocket::State;
 use rocket::response::status;
 use std::{collections::HashMap, sync::Mutex};
@@ -63,19 +66,28 @@ fn merge_onto(output: i32, file: i32) -> () {
     unsafe { netcdf_sys::nc_inq_nvars(file, &mut nvarsp) };
     for varid in 0..nvarsp {
         let mut name_buf: Vec<libc::c_char> = vec![0; 256];
-        let name = name_buf.as_mut_ptr();
-        unsafe { netcdf_sys::nc_inq_varname(file, varid, name) };
-        let mut xtypep = 0;
-        unsafe { netcdf_sys::nc_inq_vartype(file, varid, &mut xtypep) };
-        let mut ndims = 0;
-        unsafe { netcdf_sys::nc_inq_varndims(file, varid, &mut ndims) };
-        let mut dimids: Vec<i32> = vec![0; ndims as usize];
-        unsafe { netcdf_sys::nc_inq_vardimid(file, varid, dimids.as_mut_ptr()) };
+        let mut xtypep: netcdf_sys::nc_type = 0; // typeid
+        let mut ndims: libc::c_int = 0; // number of dimensions
+        // We need to grab ndims before making our final inquiry so we can size our dimids vector
+        unsafe { nc_inq_ndims(file, &mut ndims) };
+        let mut dimids: Vec<libc::c_int> = vec![0; ndims as usize]; // dimension IDs
+        let mut nattsp: libc::c_int = 0; // number of attributes
+        unsafe {
+            nc_inq_var(
+                file,
+                varid,
+                name_buf.as_mut_ptr(),
+                &mut xtypep,
+                &mut ndims,
+                dimids.as_mut_ptr(),
+                &mut nattsp,
+            )
+        };
         let mut new_varid = -1;
         unsafe {
             netcdf_sys::nc_def_var(
                 output,
-                name,
+                name_buf.as_mut_ptr(),
                 xtypep,
                 ndims,
                 dimids.as_mut_ptr(),
@@ -83,11 +95,47 @@ fn merge_onto(output: i32, file: i32) -> () {
             )
         };
 
+        // Copy variable attributes
+        for attid in 0..nattsp {
+            let mut att_name_buf: Vec<libc::c_char> = vec![0; 256];
+            let att_name = att_name_buf.as_mut_ptr();
+            let mut xtypep = 0;
+            let mut lenp = 0; // number of values currently stored in the attribute
+            unsafe {
+                netcdf_sys::nc_inq_attname(file, varid, attid, att_name);
+                netcdf_sys::nc_inq_att(file, varid, att_name, &mut xtypep, &mut lenp);
+            }
+            let mut type_name_buf: Vec<libc::c_char> = vec![0; 256];
+            let type_name = type_name_buf.as_mut_ptr();
+            let mut type_size = 0;
+            unsafe { netcdf_sys::nc_inq_type(file, xtypep, type_name, &mut type_size) };
+            let mut data: Vec<u8> = vec![0; lenp * type_size];
+
+            unsafe {
+                netcdf_sys::nc_get_att(
+                    file,
+                    varid,
+                    att_name,
+                    data.as_mut_ptr() as *mut std::os::raw::c_void,
+                )
+            };
+            unsafe {
+                netcdf_sys::nc_put_att(
+                    output,
+                    new_varid,
+                    att_name,
+                    xtypep,
+                    lenp,
+                    data.as_ptr() as *const std::os::raw::c_void,
+                )
+            };
+        }
+
         // Copy variable data
         // TODO
     }
 
-    // Copy attributes
+    // Copy global attributes
     // TODO
 }
 
