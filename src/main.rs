@@ -134,7 +134,7 @@ fn merge_onto(output: libc::c_int, file: libc::c_int) -> () {
     }
 
     // Copy dimensions
-    let mut dimids = 0;
+    let mut dimids = 0; // this should be an array but we don't use it anyway
     unsafe { netcdf_sys::nc_inq_dimids(file, &mut num_dims, &mut dimids, 0) };
     for dimid in 0..num_dims {
         merge_dims(file, output, dimid);
@@ -209,8 +209,9 @@ fn merge_onto(output: libc::c_int, file: libc::c_int) -> () {
         
         // Copy variable data
         let mut var_type_size = 0;
+        let mut var_type_name: Vec<libc::c_char> = vec![0; 256];
         unsafe {
-            nc_inq_type(file, var_type, var_name.as_mut_ptr(), &mut var_type_size);
+            nc_inq_type(file, var_type, var_type_name.as_mut_ptr(), &mut var_type_size);
         }
         let mut var_length = 1;
         for dim_index in 0..var_num_dims {
