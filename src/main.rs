@@ -1,6 +1,4 @@
-use netcdf_sys::{
-    NC_memio, nc_close_memio, nc_create, nc_create_mem, nc_def_dim, nc_enddef, nc_inq_format, nc_strerror
-};
+use netcdf_sys::{NC_memio, nc_close_memio, nc_create_mem, nc_def_dim, nc_inq, nc_strerror};
 use rocket::State;
 use rocket::response::status;
 use std::{collections::HashMap, sync::Mutex};
@@ -42,6 +40,55 @@ fn part_b(name: String, input: Vec<u8>, state: &State<AppState>) -> status::Acce
     entry.part_b = Some(input);
     let byte_count = entry.part_a.as_ref().unwrap().len();
     status::Accepted(format!("received: '{}' ({} bytes)", name, byte_count))
+}
+
+// Merges two netCDF files (represented by their ncid) by copying the the second one onto the first
+fn merge_onto(output: i32, file: i32) -> () {
+    // Copy dimensions
+    let mut ndims = 0;
+    let mut dimids = 0;
+    unsafe { netcdf_sys::nc_inq_dimids(file, &mut ndims, &mut dimids, 0) };
+    for dimid in 0..ndims {
+        let mut name_buf: Vec<libc::c_char> = vec![0; 256];
+        let name = name_buf.as_mut_ptr();
+        unsafe { netcdf_sys::nc_inq_dimname(file, dimid, name) };
+        let mut len = 0;
+        unsafe { netcdf_sys::nc_inq_dimlen(file, dimid, &mut len) };
+        let mut idp = -1;
+        unsafe { nc_def_dim(output, name, len, &mut idp) };
+    }
+
+    // Copy variables
+    let mut nvarsp = 0;
+    unsafe { netcdf_sys::nc_inq_nvars(file, &mut nvarsp) };
+    for varid in 0..nvarsp {
+        let mut name_buf: Vec<libc::c_char> = vec![0; 256];
+        let name = name_buf.as_mut_ptr();
+        unsafe { netcdf_sys::nc_inq_varname(file, varid, name) };
+        let mut xtypep = 0;
+        unsafe { netcdf_sys::nc_inq_vartype(file, varid, &mut xtypep) };
+        let mut ndims = 0;
+        unsafe { netcdf_sys::nc_inq_varndims(file, varid, &mut ndims) };
+        let mut dimids: Vec<i32> = vec![0; ndims as usize];
+        unsafe { netcdf_sys::nc_inq_vardimid(file, varid, dimids.as_mut_ptr()) };
+        let mut new_varid = -1;
+        unsafe {
+            netcdf_sys::nc_def_var(
+                output,
+                name,
+                xtypep,
+                ndims,
+                dimids.as_mut_ptr(),
+                &mut new_varid,
+            )
+        };
+
+        // Copy variable data
+        // TODO
+    }
+
+    // Copy attributes
+    // TODO
 }
 
 // Reimplement NC_memio to circumvent privacy issue
@@ -90,14 +137,7 @@ fn merge_parts(part_a: &Vec<u8>, part_b: &Vec<u8>) -> Vec<u8> {
 
     // create a new file to hold the merged data
     let mut output = -1;
-    let status = unsafe {
-        nc_create_mem(
-            "output.nc\0".as_ptr().cast(),
-            0,
-            0,
-            &mut output,
-        )
-    };
+    let status = unsafe { nc_create_mem("output.nc\0".as_ptr().cast(), 0, 0, &mut output) };
     if status != 0 {
         panic!("Failed to create output file: {}", unsafe {
             std::ffi::CStr::from_ptr(nc_strerror(status)).to_string_lossy()
@@ -105,93 +145,28 @@ fn merge_parts(part_a: &Vec<u8>, part_b: &Vec<u8>) -> Vec<u8> {
     }
     println!("Created output file with ncid {}", output);
 
-    // Write some dummy data
-    let mut time_dimid = -1;
-    let status = unsafe { nc_def_dim(output, "time\0".as_ptr().cast(), 10, &mut time_dimid) };
-    println!(
-        "Defined dimension 'time' with id {} (status {})",
-        time_dimid, status
-    );
-
-    let mut temp_varid = -1;
-    let status = unsafe {
-        netcdf_sys::nc_def_var(
-            output,
-            "temperature\0".as_ptr().cast(),
-            netcdf_sys::NC_FLOAT,
-            1,
-            &time_dimid,
-            &mut temp_varid,
-        )
-    };
-    println!(
-        "Defined variable 'temperature' with id {} (status {})",
-        temp_varid, status
-    );
-
-    // let temp_data: Vec<f32> = (0..10).map(|i| i as f32 * 1.5).collect();
-    // let status = unsafe {
-    //     netcdf_sys::nc_put_var_float(
-    //         output,
-    //         temp_varid,
-    //         temp_data.as_ptr() as *const f32,
-    //     )
-    // };
-    // println!("Wrote data to 'temperature' variable (status {})", status);
-
     // Copy data over from both files
-    // for file in [file_a, file_b] {
-    //     // Copy dimensions
-    //     let mut ndims = 0;
-    //     let mut dimids: Vec<i32> = Vec::new();
-    //     unsafe { netcdf_sys::nc_inq_dimids(file, &mut ndims, dimids.as_mut_ptr(), 0) };
-    //     for dimid in dimids {
-    //         let mut name= -1;
-    //         unsafe { nc_inq_dimname(file, dimid, &mut name) };
-    //         let mut len = 0;
-    //         unsafe { nc_inq_dimlen(file, dimid, &mut len) };
-    //         let mut idp = -1;
-    //         unsafe { nc_def_dim(output, &mut name, len, &mut idp) };
-    //     }
+    merge_onto(output, file_a);
+    // merge_onto(output, file_b);
 
-    // Copy variables
-    // for var in file.variables() {
-    //     let name = var.name();
-    // if output.variable(&name).is_none() {
-    //     let var_type = var.vartype();
-    //     let dim_ids: Vec<DimensionIdentifier> = var
-    //         .dimensions()
-    //         .into_iter()
-    //         .map(|d| d.identifier())
-    //         .collect();
-    //     let mut new_var = match output
-    //         .add_variable_from_identifiers_with_type(&name, &dim_ids, &var_type)
-    //     {
-    //         Ok(v) => v,
-    //         Err(e) => {
-    //             eprintln!("Failed to add variable '{}': {}", name, e);
-    //             // Skip this variable on error
-    //             continue;
-    //         }
-    //     };
-
-    //     // Copy variable data
-    //     let data: Vec<u8> = var.get_raw_values(netcdf::Extents::All).unwrap();
-    //     new_var.put_values(&data, netcdf::Extents::All).unwrap();
-    // }
-    // }
-
-    // Copy attributes
-    // for attr in file.attributes() {
-    //     output
-    //         .add_attribute::<AttributeValue>(&attr.name(), attr.value().unwrap())
-    //         .unwrap();
-    // }
-    // }
-
+    // Check information about output file
+    let mut ndimsp = 0;
+    let mut nvarsp = 0;
+    let mut nattsp = 0;
+    let mut unlimdimidp = 0;
     unsafe {
-        nc_enddef(output);
+        nc_inq(
+            output,
+            &mut ndimsp,
+            &mut nvarsp,
+            &mut nattsp,
+            &mut unlimdimidp,
+        );
     }
+    println!(
+        "Output file info - ndims: {}, nvars: {}, natts: {}, unlimdimid: {}",
+        ndimsp, nvarsp, nattsp, unlimdimidp
+    );
 
     // Write output to memory
     let mut info: NC_memio = unsafe { std::mem::zeroed() };
