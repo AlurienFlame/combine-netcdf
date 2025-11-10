@@ -1,5 +1,5 @@
 use netcdf_sys::{
-    NC_memio, nc_close_memio, nc_create_mem, nc_def_dim, nc_enddef, nc_get_var, nc_inq, nc_inq_ndims, nc_inq_type, nc_inq_var, nc_strerror
+    NC_memio, nc_close_memio, nc_create_mem, nc_def_dim, nc_def_var_endian, nc_enddef, nc_get_var, nc_inq, nc_inq_ndims, nc_inq_type, nc_inq_var, nc_inq_var_endian, nc_strerror
 };
 use rocket::State;
 use rocket::response::status;
@@ -105,6 +105,51 @@ fn merge_attrs(
     };
 }
 
+fn merge_var_definitions(source: libc::c_int, base: libc::c_int, varid: libc::c_int) {
+    // Get variable data
+    let mut var_name: Vec<libc::c_char> = vec![0; 256];
+    let mut var_type: netcdf_sys::nc_type = 0;
+    let mut var_num_dims: libc::c_int = 0;
+    // We need to grab ndims before making our final inquiry so we can size our dimids vector
+    unsafe { nc_inq_ndims(source, &mut var_num_dims) };
+    let mut dimids: Vec<libc::c_int> = vec![0; var_num_dims as usize];
+    let mut var_num_attrs: libc::c_int = 0;
+    unsafe {
+        nc_inq_var(
+            source,
+            varid,
+            var_name.as_mut_ptr(),
+            &mut var_type,
+            &mut var_num_dims,
+            dimids.as_mut_ptr(),
+            &mut var_num_attrs,
+        )
+    };
+    
+    // Copy variable definitions
+    let mut new_varid: libc::c_int = -1;
+    unsafe {
+        netcdf_sys::nc_def_var(
+            base,
+            var_name.as_mut_ptr(),
+            var_type,
+            var_num_dims,
+            dimids.as_mut_ptr(),
+            &mut new_varid,
+        )
+    };
+    
+    // Match endian-ness
+    // let mut endianp: libc::c_int = 0;
+    // unsafe { nc_inq_var_endian(file, varid, &mut endianp) };
+    // unsafe { nc_def_var_endian(output, new_varid, endianp) };
+    
+    // Copy variable attributes
+    for attr_idx in 0..var_num_attrs {
+        merge_attrs(source, base, attr_idx, varid, new_varid);
+    }
+}
+
 // Merges two netCDF files (represented by their ncid) by copying the the second one onto the first
 fn merge_onto(output: libc::c_int, file: libc::c_int) -> () {
     // Get info about the file we're copying from
@@ -142,43 +187,7 @@ fn merge_onto(output: libc::c_int, file: libc::c_int) -> () {
 
     // Copy variables
     for varid in 0..num_vars {
-        // Get variable data
-        let mut var_name: Vec<libc::c_char> = vec![0; 256];
-        let mut var_type: netcdf_sys::nc_type = 0;
-        let mut var_num_dims: libc::c_int = 0;
-        // We need to grab ndims before making our final inquiry so we can size our dimids vector
-        unsafe { nc_inq_ndims(file, &mut var_num_dims) };
-        let mut dimids: Vec<libc::c_int> = vec![0; var_num_dims as usize];
-        let mut var_num_attrs: libc::c_int = 0;
-        unsafe {
-            nc_inq_var(
-                file,
-                varid,
-                var_name.as_mut_ptr(),
-                &mut var_type,
-                &mut var_num_dims,
-                dimids.as_mut_ptr(),
-                &mut var_num_attrs,
-            )
-        };
-        
-        // Copy variable definitions
-        let mut new_varid: libc::c_int = -1;
-        unsafe {
-            netcdf_sys::nc_def_var(
-                output,
-                var_name.as_mut_ptr(),
-                var_type,
-                var_num_dims,
-                dimids.as_mut_ptr(),
-                &mut new_varid,
-            )
-        };
-
-        // Copy variable attributes
-        for attr_idx in 0..var_num_attrs {
-            merge_attrs(file, output, attr_idx, varid, new_varid);
-        }
+        merge_var_definitions(file, output, varid);
     }
     
     // End define mode
@@ -206,7 +215,6 @@ fn merge_onto(output: libc::c_int, file: libc::c_int) -> () {
             )
         };
         
-        
         // Copy variable data
         let mut var_type_size = 0;
         let mut var_type_name: Vec<libc::c_char> = vec![0; 256];
@@ -229,6 +237,7 @@ fn merge_onto(output: libc::c_int, file: libc::c_int) -> () {
                 buffer.as_mut_ptr() as *mut std::os::raw::c_void,
             )
         };
+        // TODO: merge with existing data along an unlimited dimension
         unsafe {
             netcdf_sys::nc_put_var(
                 output,
@@ -284,6 +293,7 @@ fn merge_parts(part_a: &Vec<u8>, part_b: &Vec<u8>) -> Vec<u8> {
     println!("Opened part B with ncid {}", file_b);
 
     // create a new file to hold the merged data
+    // I could probably just clone A and merge onto it, but this way I can be sure that I'm writing everything
     let mut output = -1;
     let status = unsafe { nc_create_mem("output.nc\0".as_ptr().cast(), 0, 0, &mut output) };
     if status != 0 {

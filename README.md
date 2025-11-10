@@ -1,4 +1,14 @@
 ## How to Run
+`cargo run`
+## Code Structure
+`main.rs` contains three endpoints, and several functions for merging files.
+- `/part_a` and `/part_b` accept file uploads and store them in a map based on name.
+- `/read` merges the two files in memory and sends the result to the client. It calls:
+    - `merge_parts`, which takes the binary data of the two files and opens them in memory, before passing them to:
+        - `merge_onto`, which reads the files' metadata and copies one onto the other, using several helper functions:
+            - `merge_dims`
+            - `merge_attrs`
+            - `merge_var_definitions`
 ## Handling Parallel Requests
 ## Spec
 make a simple rust server that can combine NetCDF files in memory.
