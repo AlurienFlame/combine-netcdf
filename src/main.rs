@@ -1,3 +1,4 @@
+use netcdf_sys::nc_copy_var;
 use rocket::State;
 use rocket::response::status;
 use std::{collections::HashMap, sync::Mutex};
@@ -270,6 +271,10 @@ fn merge_files(base: libc::c_int, source: libc::c_int) -> () {
     }
 
     // Copy variables
+
+    // Now, I know what you're thinking. Why not use nc_copy_var?
+    // Well, firstly, I didn't realize that existed until after I had this solution working.
+    // Still, I tried it afterwards, and it turns out it's exponentially slower. I'm not sure why.
     for varid in 0..num_vars {
         merge_var_definitions(source, base, varid);
     }
