@@ -1,8 +1,3 @@
-use netcdf_sys::nc_copy_var;
-use rocket::State;
-use rocket::response::status;
-use std::{collections::HashMap, sync::Mutex};
-
 #[macro_use]
 extern crate rocket;
 
@@ -13,11 +8,11 @@ struct Parts {
 
 // Switch to something like a DashMap to scale up
 struct AppState {
-    storage: Mutex<HashMap<String, Parts>>,
+    storage: std::sync::Mutex<std::collections::HashMap<String, Parts>>,
 }
 
 #[post("/part_a?<name>", format = "application/x-netcdf", data = "<input>")]
-fn part_a(name: String, input: Vec<u8>, state: &State<AppState>) -> status::Accepted<String> {
+fn part_a(name: String, input: Vec<u8>, state: &rocket::State<AppState>) -> rocket::response::status::Accepted<String> {
     // Dig up the relevant part of state, or create it if necessary
     let mut storage = state.storage.lock().unwrap();
     let entry = storage.entry(name.clone()).or_insert_with(|| Parts {
@@ -27,11 +22,11 @@ fn part_a(name: String, input: Vec<u8>, state: &State<AppState>) -> status::Acce
     // Update state with the uploaded file
     entry.part_a = Some(input);
     let byte_count = entry.part_a.as_ref().unwrap().len();
-    status::Accepted(format!("received: '{}' ({} bytes)", name, byte_count))
+    rocket::response::status::Accepted(format!("received: '{}' ({} bytes)", name, byte_count))
 }
 
 #[post("/part_b?<name>", format = "application/x-netcdf", data = "<input>")]
-fn part_b(name: String, input: Vec<u8>, state: &State<AppState>) -> status::Accepted<String> {
+fn part_b(name: String, input: Vec<u8>, state: &rocket::State<AppState>) -> rocket::response::status::Accepted<String> {
     // Dig up the relevant part of state, or create it if necessary
     let mut storage = state.storage.lock().unwrap();
     let entry = storage.entry(name.clone()).or_insert_with(|| Parts {
@@ -41,7 +36,7 @@ fn part_b(name: String, input: Vec<u8>, state: &State<AppState>) -> status::Acce
     // Update state with the uploaded file
     entry.part_b = Some(input);
     let byte_count = entry.part_a.as_ref().unwrap().len();
-    status::Accepted(format!("received: '{}' ({} bytes)", name, byte_count))
+    rocket::response::status::Accepted(format!("received: '{}' ({} bytes)", name, byte_count))
 }
 
 fn merge_dims(source: libc::c_int, base: libc::c_int, source_dimid: libc::c_int) -> () {
@@ -438,7 +433,7 @@ fn merge_parts(part_a: &Vec<u8>, part_b: &Vec<u8>) -> Vec<u8> {
 }
 
 #[get("/read?<name>")]
-fn read(name: &str, state: &State<AppState>) -> Vec<u8> {
+fn read(name: &str, state: &rocket::State<AppState>) -> Vec<u8> {
     let storage = state.storage.lock().unwrap();
     let part_a = storage
         .get(name)
@@ -457,6 +452,6 @@ fn rocket() -> _ {
     rocket::build()
         .mount("/", routes![part_a, part_b, read])
         .manage(AppState {
-            storage: Mutex::new(HashMap::new()),
+            storage: std::sync::Mutex::new(std::collections::HashMap::new()),
         })
 }
