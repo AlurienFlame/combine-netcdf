@@ -51,6 +51,8 @@ fn merge_dims(source: libc::c_int, base: libc::c_int, source_dimid: libc::c_int)
     unsafe { netcdf_sys::nc_inq_dimlen(source, source_dimid, &mut len) };
     let mut idp = -1;
     unsafe { netcdf_sys::nc_def_dim(base, name, len, &mut idp) };
+    // Here and anywhere else where the definition will already exist in the second run-through,
+    // we just ignore the error. A check could be inserted without much difficulty, but it wouldn't do much.
 }
 
 fn merge_attrs(
