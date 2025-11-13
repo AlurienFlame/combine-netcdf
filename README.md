@@ -21,6 +21,8 @@ My criteria for success:
             - `merge_attrs`
             - `merge_var_definitions`
             - `merge_var_data`
+## The Approach
+Essentially, when the user hits the read endpoint, we do the following: make an empty NetCDF file in memory, then copy over each thing from the first file, and then from the second. In the case of conflicts, the second file's copying quietly fails. Now, it may have been simpler to just copy variables from the second file to a duplicate of the first - likely far simpler - but by the time I realized that, I already had this approach mostly working, so it was easier to finish that up. The result is definitely over-engineered, but it's also a lot more explicit about what data gets carried over, so there's less chance of discreet format or metadata details on the files causing confusing bugs.
 ## Handling Parallel Requests
 Currently, we store uploaded files in a map inside a Mutex, which avoids parallelism issues by not allowing it at all. This utterly fails to scale. Furthermore, the netcdf_sys library is not thread-safe, which creates another bottleneck.
 
