@@ -50,22 +50,7 @@ fn merge_dims(source: libc::c_int, base: libc::c_int, source_dimid: libc::c_int)
     let mut len = 0;
     unsafe { netcdf_sys::nc_inq_dimlen(source, source_dimid, &mut len) };
     let mut idp = -1;
-    let status = unsafe { netcdf_sys::nc_def_dim(base, name, len, &mut idp) };
-    if status != 0 {
-        unsafe {
-            eprintln!(
-                "Error defining dimension: {}",
-                std::ffi::CStr::from_ptr(netcdf_sys::nc_strerror(status)).to_string_lossy()
-            )
-        };
-    } else {
-        println!(
-            "Defined dimension '{}' of length {} with id {}",
-            unsafe { std::ffi::CStr::from_ptr(name).to_string_lossy() },
-            len,
-            idp
-        );
-    }
+    unsafe { netcdf_sys::nc_def_dim(base, name, len, &mut idp) };
 }
 
 fn merge_attrs(
@@ -136,7 +121,7 @@ fn merge_var_definitions(source: libc::c_int, base: libc::c_int, varid: libc::c_
 
     // Copy variable definitions
     let mut new_varid: libc::c_int = -1;
-    unsafe {
+    let status = unsafe {
         netcdf_sys::nc_def_var(
             base,
             var_name.as_mut_ptr(),
@@ -146,22 +131,51 @@ fn merge_var_definitions(source: libc::c_int, base: libc::c_int, varid: libc::c_
             &mut new_varid,
         )
     };
-
-    // Match endian-ness
-    // let mut endianp: libc::c_int = 0;
-    // unsafe { nc_inq_var_endian(file, varid, &mut endianp) };
-    // unsafe { nc_def_var_endian(output, new_varid, endianp) };
+    if status == netcdf_sys::NC_ENAMEINUSE {
+        unsafe { netcdf_sys::nc_inq_varid(base, var_name.as_ptr(), &mut new_varid) };
+    } else if status != 0 {
+        panic!("Failed to define variable: code {}: {}", status, unsafe {
+            std::ffi::CStr::from_ptr(netcdf_sys::nc_strerror(status)).to_string_lossy()
+        });
+    }
 
     // Copy variable attributes
     for attr_idx in 0..var_num_attrs {
         merge_attrs(source, base, attr_idx, varid, new_varid);
     }
 
-    println!(
-        "Defined variable '{}' with id {}",
-        unsafe { std::ffi::CStr::from_ptr(var_name.as_ptr()).to_string_lossy() },
-        new_varid
-    );
+    // Match chunking settings
+    let mut storagep: libc::c_int = 0;
+    let mut chunksizes: Vec<libc::size_t> = vec![0; var_num_dims as usize];
+    unsafe {
+        netcdf_sys::nc_inq_var_chunking(source, varid, &mut storagep, chunksizes.as_mut_ptr())
+    };
+    unsafe { netcdf_sys::nc_def_var_chunking(base, new_varid, storagep, chunksizes.as_mut_ptr()) };
+
+    // Match deflation settings
+    let mut shufflep: libc::c_int = 0;
+    let mut deflatep: libc::c_int = 0;
+    let mut deflate_levelp: libc::c_int = 0;
+    unsafe {
+        netcdf_sys::nc_inq_var_deflate(
+            source,
+            varid,
+            &mut shufflep,
+            &mut deflatep,
+            &mut deflate_levelp,
+        )
+    };
+    unsafe {
+        netcdf_sys::nc_def_var_deflate(base, new_varid, shufflep, deflatep, deflate_levelp)
+    };
+
+    // TODO: Match other compression settings (fletcher32, szip, etc.) and other stuff like chunking and endianness
+
+    // println!(
+    //     "Defined variable '{}' with id {}",
+    //     unsafe { std::ffi::CStr::from_ptr(var_name.as_ptr()).to_string_lossy() },
+    //     new_varid
+    // );
 }
 
 fn merge_var_data(source: libc::c_int, base: libc::c_int, varid: libc::c_int) {
@@ -237,7 +251,7 @@ fn merge_files(base: libc::c_int, source: libc::c_int) -> () {
             &mut unlimdimidp,
         );
     }
-    
+
     // Pop into data mode. We're in this by default, but it might not be the first time we've run this function.
     unsafe { netcdf_sys::nc_redef(base) };
 
@@ -268,6 +282,8 @@ fn merge_files(base: libc::c_int, source: libc::c_int) -> () {
     for varid in 0..num_vars {
         merge_var_data(source, base, varid);
     }
+
+    print!("Finished merging file ncid {} into ncid {}\n", source, base);
 }
 
 // Reimplement NC_memio to circumvent privacy issue
@@ -318,9 +334,43 @@ fn merge_parts(part_a: &Vec<u8>, part_b: &Vec<u8>) -> Vec<u8> {
 
     // create a new file to hold the merged data
     // I could probably just clone A and merge onto it, but this way I can be sure that I'm writing everything
+    let mut formatp: libc::c_int = 0;
+    unsafe { netcdf_sys::nc_inq_format(file_a, &mut formatp) };
+    let flags: libc::c_int;
+    match formatp {
+        netcdf_sys::NC_FORMAT_CLASSIC => {
+            flags = netcdf_sys::NC_CLASSIC_MODEL;
+        }
+        netcdf_sys::NC_FORMAT_64BIT_OFFSET => {
+            flags = netcdf_sys::NC_64BIT_OFFSET;
+        }
+        netcdf_sys::NC_FORMAT_CDF5 => {
+            flags = netcdf_sys::NC_CDF5; // == NC_64BIT_DATA
+        }
+        netcdf_sys::NC_FORMAT_NETCDF4 => {
+            flags = netcdf_sys::NC_NETCDF4;
+        }
+        netcdf_sys::NC_FORMAT_NETCDF4_CLASSIC => {
+            // I have no idea if this is even allowed
+            flags = netcdf_sys::NC_NETCDF4 | netcdf_sys::NC_CLASSIC_MODEL;
+        }
+        _ => {
+            panic!("Unknown netCDF format: {}", formatp);
+        }
+    }
+
+    let mut formatp_b: libc::c_int = 0;
+    unsafe { netcdf_sys::nc_inq_format(file_b, &mut formatp_b) };
+    if formatp != formatp_b {
+        println!(
+            "Input files have different formats: {} vs {}",
+            formatp, formatp_b
+        );
+    }
+
     let mut output = -1;
     let status =
-        unsafe { netcdf_sys::nc_create_mem("output.nc\0".as_ptr().cast(), 0, 0, &mut output) };
+        unsafe { netcdf_sys::nc_create_mem("output.nc\0".as_ptr().cast(), flags, 0, &mut output) };
     if status != 0 {
         panic!("Failed to create output file: {}", unsafe {
             std::ffi::CStr::from_ptr(netcdf_sys::nc_strerror(status)).to_string_lossy()
