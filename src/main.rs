@@ -9,6 +9,8 @@ struct Parts {
     part_a: Option<Vec<u8>>,
     part_b: Option<Vec<u8>>,
 }
+
+// Switch to something like a DashMap to scale up
 struct AppState {
     storage: Mutex<HashMap<String, Parts>>,
 }
@@ -48,13 +50,22 @@ fn merge_dims(source: libc::c_int, base: libc::c_int, source_dimid: libc::c_int)
     let mut len = 0;
     unsafe { netcdf_sys::nc_inq_dimlen(source, source_dimid, &mut len) };
     let mut idp = -1;
-    unsafe { netcdf_sys::nc_def_dim(base, name, len, &mut idp) };
-    println!(
-        "Defined dimension '{}' of length {} with id {}",
-        unsafe { std::ffi::CStr::from_ptr(name).to_string_lossy() },
-        len,
-        idp
-    );
+    let status = unsafe { netcdf_sys::nc_def_dim(base, name, len, &mut idp) };
+    if status != 0 {
+        unsafe {
+            eprintln!(
+                "Error defining dimension: {}",
+                std::ffi::CStr::from_ptr(netcdf_sys::nc_strerror(status)).to_string_lossy()
+            )
+        };
+    } else {
+        println!(
+            "Defined dimension '{}' of length {} with id {}",
+            unsafe { std::ffi::CStr::from_ptr(name).to_string_lossy() },
+            len,
+            idp
+        );
+    }
 }
 
 fn merge_attrs(
@@ -122,7 +133,7 @@ fn merge_var_definitions(source: libc::c_int, base: libc::c_int, varid: libc::c_
             &mut var_num_attrs,
         )
     };
-    
+
     // Copy variable definitions
     let mut new_varid: libc::c_int = -1;
     unsafe {
@@ -135,16 +146,22 @@ fn merge_var_definitions(source: libc::c_int, base: libc::c_int, varid: libc::c_
             &mut new_varid,
         )
     };
-    
+
     // Match endian-ness
     // let mut endianp: libc::c_int = 0;
     // unsafe { nc_inq_var_endian(file, varid, &mut endianp) };
     // unsafe { nc_def_var_endian(output, new_varid, endianp) };
-    
+
     // Copy variable attributes
     for attr_idx in 0..var_num_attrs {
         merge_attrs(source, base, attr_idx, varid, new_varid);
     }
+
+    println!(
+        "Defined variable '{}' with id {}",
+        unsafe { std::ffi::CStr::from_ptr(var_name.as_ptr()).to_string_lossy() },
+        new_varid
+    );
 }
 
 fn merge_var_data(source: libc::c_int, base: libc::c_int, varid: libc::c_int) {
@@ -167,12 +184,17 @@ fn merge_var_data(source: libc::c_int, base: libc::c_int, varid: libc::c_int) {
             &mut var_num_attrs,
         )
     };
-    
+
     // Copy variable data
     let mut var_type_size = 0;
     let mut var_type_name: Vec<libc::c_char> = vec![0; 256];
     unsafe {
-        netcdf_sys::nc_inq_type(source, var_type, var_type_name.as_mut_ptr(), &mut var_type_size);
+        netcdf_sys::nc_inq_type(
+            source,
+            var_type,
+            var_type_name.as_mut_ptr(),
+            &mut var_type_size,
+        );
     }
     let mut var_length = 1;
     for dim_index in 0..var_num_dims {
@@ -190,7 +212,6 @@ fn merge_var_data(source: libc::c_int, base: libc::c_int, varid: libc::c_int) {
             buffer.as_mut_ptr() as *mut std::os::raw::c_void,
         )
     };
-    // TODO: merge with existing data along an unlimited dimension
     unsafe {
         netcdf_sys::nc_put_var(
             base,
@@ -216,6 +237,9 @@ fn merge_files(base: libc::c_int, source: libc::c_int) -> () {
             &mut unlimdimidp,
         );
     }
+    
+    // Pop into data mode. We're in this by default, but it might not be the first time we've run this function.
+    unsafe { netcdf_sys::nc_redef(base) };
 
     // Copy global attributes
     for attr_idx in 0..num_global_atts {
@@ -240,7 +264,7 @@ fn merge_files(base: libc::c_int, source: libc::c_int) -> () {
         merge_var_definitions(source, base, varid);
     }
     unsafe { netcdf_sys::nc_enddef(base) };
-    
+
     for varid in 0..num_vars {
         merge_var_data(source, base, varid);
     }
@@ -290,10 +314,13 @@ fn merge_parts(part_a: &Vec<u8>, part_b: &Vec<u8>) -> Vec<u8> {
     }
     println!("Opened part B with ncid {}", file_b);
 
+    // TODO: Error check for file incompatibilities
+
     // create a new file to hold the merged data
     // I could probably just clone A and merge onto it, but this way I can be sure that I'm writing everything
     let mut output = -1;
-    let status = unsafe { netcdf_sys::nc_create_mem("output.nc\0".as_ptr().cast(), 0, 0, &mut output) };
+    let status =
+        unsafe { netcdf_sys::nc_create_mem("output.nc\0".as_ptr().cast(), 0, 0, &mut output) };
     if status != 0 {
         panic!("Failed to create output file: {}", unsafe {
             std::ffi::CStr::from_ptr(netcdf_sys::nc_strerror(status)).to_string_lossy()
@@ -303,7 +330,7 @@ fn merge_parts(part_a: &Vec<u8>, part_b: &Vec<u8>) -> Vec<u8> {
 
     // Copy data over from both files
     merge_files(output, file_a);
-    // merge_onto(output, file_b);
+    merge_files(output, file_b);
 
     // Check information about output file
     let mut ndimsp = 0;
@@ -333,7 +360,8 @@ fn merge_parts(part_a: &Vec<u8>, part_b: &Vec<u8>) -> Vec<u8> {
         });
     }
     println!("Closed output file {}", output);
-    let accessible_info = unsafe { &*(&info as *const netcdf_sys::NC_memio as *const AccessibleMemio) };
+    let accessible_info =
+        unsafe { &*(&info as *const netcdf_sys::NC_memio as *const AccessibleMemio) };
     println!("Output size: {}", accessible_info.size);
 
     if accessible_info.size > isize::MAX as usize {
@@ -370,6 +398,7 @@ fn read(name: &str, state: &State<AppState>) -> Vec<u8> {
         .and_then(|entry| entry.part_b.as_ref())
         .expect("Part B not found");
     merge_parts(part_a, part_b)
+    // TODO: replace panics with error responses throughout
 }
 
 #[launch]

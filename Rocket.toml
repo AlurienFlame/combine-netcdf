@@ -1,2 +1,2 @@
 [default.limits]
-bytes = "10 MiB"
+bytes = "200 MiB"
