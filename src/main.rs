@@ -170,12 +170,6 @@ fn merge_var_definitions(source: libc::c_int, base: libc::c_int, varid: libc::c_
     };
 
     // TODO: Match other compression settings (fletcher32, szip, etc.) and other stuff like chunking and endianness
-
-    // println!(
-    //     "Defined variable '{}' with id {}",
-    //     unsafe { std::ffi::CStr::from_ptr(var_name.as_ptr()).to_string_lossy() },
-    //     new_varid
-    // );
 }
 
 fn merge_var_data(source: libc::c_int, base: libc::c_int, varid: libc::c_int) {
