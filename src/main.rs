@@ -35,7 +35,7 @@ fn part_b(name: String, input: Vec<u8>, state: &rocket::State<AppState>) -> rock
     });
     // Update state with the uploaded file
     entry.part_b = Some(input);
-    let byte_count = entry.part_a.as_ref().unwrap().len();
+    let byte_count = entry.part_b.as_ref().unwrap().len();
     rocket::response::status::Accepted(format!("received: '{}' ({} bytes)", name, byte_count))
 }
 
